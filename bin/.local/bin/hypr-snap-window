@@ -1,0 +1,133 @@
+#!/bin/bash
+# Snap the active window to a percentage-based region of its current monitor,
+# Windows-Snap style: for a plain left/right (or top/bottom) half split, the
+# next most-recently-focused window on the same workspace is snapped into
+# the other half automatically.
+#
+# Usage: hypr-snap-window <x%> <y%> <w%> <h%>
+#   e.g. hypr-snap-window 0 0 50 100   -> left half (right half gets the
+#                                          next window, if any)
+#        hypr-snap-window 50 0 50 100  -> right half (left gets the next window)
+#
+# Hyprland 0.56's Lua dispatch API (hl.dsp.window.*) replaced the old
+# "moveactive/resizeactive exact X% Y%" string dispatchers, and doesn't take
+# percentages directly -- it wants absolute logical pixels, and resize keeps
+# the window's *center* fixed, so resize has to run before move or the final
+# position is wrong. So the math and ordering live here instead of a one-line
+# hyprctl --batch string.
+set -euo pipefail
+
+# Key repeat (holding Alt+Left/Right, or tapping it fast) can fire a new
+# invocation before the previous one finishes its handful of hyprctl calls.
+# Two copies racing on the same clients_json snapshot and the same two
+# windows is exactly what made a window intermittently vanish or overlap
+# during testing. Drop any invocation that arrives while one is still
+# running instead of letting them interleave.
+exec 9>"/tmp/hypr-snap-window.lock"
+flock -n 9 || exit 0
+
+place() {
+  local address=$1 x=$2 y=$3 w=$4 h=$5
+  hyprctl dispatch "hl.dsp.window.float({action=\"set\", window=\"address:$address\"})" >/dev/null
+  hyprctl dispatch "hl.dsp.window.resize({x=$w, y=$h, relative=false, window=\"address:$address\"})" >/dev/null
+  hyprctl dispatch "hl.dsp.window.move({x=$x, y=$y, relative=false, window=\"address:$address\"})" >/dev/null
+}
+
+xpct=$1 ypct=$2 wpct=$3 hpct=$4
+
+clients_json=$(hyprctl clients -j)
+active_json=$(hyprctl activewindow -j)
+active_address=$(jq -r '.address' <<<"$active_json")
+active_ws=$(jq -r '.workspace.id' <<<"$active_json")
+active_monitor=$(jq -r '.monitor' <<<"$active_json")
+
+read -r mon_x mon_y mon_w mon_h < <(
+  hyprctl monitors -j | jq -r --argjson id "$active_monitor" '
+    .[] | select(.id == $id) |
+    "\(.x) \(.y) \((.width / .scale) | floor) \((.height / .scale) | floor)"
+  '
+)
+
+# reserved[1] is empirically this bar's top exclusive zone on this monitor;
+# fall back to 0 if that ever comes up empty on a monitor with no bar.
+top_reserved=$(
+  hyprctl monitors -j | jq -r --argjson id "$active_monitor" '
+    (.[] | select(.id == $id) | .reserved[1]) // 0
+  '
+)
+gap_out=$(hyprctl getoption general:gaps_out -j | jq -r '.css | split(" ")[0]')
+gap_in=$(hyprctl getoption general:gaps_in -j | jq -r '.css | split(" ")[0]')
+
+safe_x=$(( mon_x + gap_out ))
+safe_y=$(( mon_y + top_reserved + gap_out ))
+safe_w=$(( mon_w - 2 * gap_out ))
+safe_h=$(( mon_h - top_reserved - 2 * gap_out ))
+
+# Only auto-fill a companion window for a plain half-screen split (exactly
+# one of width/height is 100%) -- quadrant/corner snaps leave two other
+# quadrants free, so there's no single unambiguous "other half" to fill.
+# The two halves need gap_in between them, same as two tiled windows would
+# have -- a plain 50/50 split of the percentages leaves them flush against
+# each other with no seam.
+is_vsplit=0 is_hsplit=0
+[[ $wpct -lt 100 && $hpct -eq 100 ]] && is_vsplit=1
+[[ $hpct -lt 100 && $wpct -eq 100 ]] && is_hsplit=1
+
+if [[ $is_vsplit -eq 1 ]]; then
+  half_w=$(( (safe_w - gap_in) / 2 ))
+  if [[ $xpct -eq 0 ]]; then
+    x=$safe_x; w=$half_w
+    other_x=$(( safe_x + half_w + gap_in )); other_w=$(( safe_w - half_w - gap_in ))
+  else
+    other_w=$half_w; other_x=$safe_x
+    w=$(( safe_w - half_w - gap_in )); x=$(( safe_x + half_w + gap_in ))
+  fi
+  y=$safe_y; h=$safe_h
+  other_y=$safe_y; other_h=$safe_h
+elif [[ $is_hsplit -eq 1 ]]; then
+  half_h=$(( (safe_h - gap_in) / 2 ))
+  if [[ $ypct -eq 0 ]]; then
+    y=$safe_y; h=$half_h
+    other_y=$(( safe_y + half_h + gap_in )); other_h=$(( safe_h - half_h - gap_in ))
+  else
+    other_h=$half_h; other_y=$safe_y
+    h=$(( safe_h - half_h - gap_in )); y=$(( safe_y + half_h + gap_in ))
+  fi
+  x=$safe_x; w=$safe_w
+  other_x=$safe_x; other_w=$safe_w
+else
+  x=$(( safe_x + safe_w * xpct / 100 ))
+  y=$(( safe_y + safe_h * ypct / 100 ))
+  w=$(( safe_w * wpct / 100 ))
+  h=$(( safe_h * hpct / 100 ))
+fi
+
+place "$active_address" "$x" "$y" "$w" "$h"
+
+if [[ $is_vsplit -eq 1 || $is_hsplit -eq 1 ]]; then
+  # Only place a companion if the target slot is actually empty. Without this,
+  # re-pressing the same or opposite direction re-picks "most recently
+  # focused other window" against focus history that placing a window itself
+  # just disturbed -- on repeated presses that grabs a different window each
+  # time and cascades into a mess instead of just toggling the same two.
+  already_filled=$(
+    jq -r --arg addr "$active_address" --argjson ox "$other_x" --argjson oy "$other_y" \
+      '
+        [.[] | select(.mapped and .address != $addr) |
+          select((.at[0] - $ox | fabs) < 3 and (.at[1] - $oy | fabs) < 3)]
+        | length
+      ' <<<"$clients_json"
+  )
+  if [[ $already_filled -eq 0 ]]; then
+    other_address=$(
+      jq -r --arg addr "$active_address" --argjson ws "$active_ws" '
+        [.[] | select(.mapped and .address != $addr and .workspace.id == $ws)]
+        | sort_by(.focusHistoryID)
+        | .[0].address // empty
+      ' <<<"$clients_json"
+    )
+    if [[ -n $other_address ]]; then
+      place "$other_address" "$other_x" "$other_y" "$other_w" "$other_h"
+    fi
+  fi
+fi

@@ -1,0 +1,41 @@
+# See https://git-scm.com/docs/git-config
+#
+# Identity and credential helpers are deliberately left as placeholders: they
+# are per-person and per-machine.  Fill them in locally, or better, keep them
+# in ~/.config/git/config.local and include it from here.
+
+[alias]
+	co = checkout
+	br = branch
+	ci = commit
+	st = status
+[init]
+	defaultBranch = master
+[pull]
+	rebase = true            # Rebase (instead of merge) on pull
+[push]
+	autoSetupRemote = true   # Automatically set upstream branch on push
+[diff]
+	algorithm = histogram    # Clearer diffs on moved/edited lines
+	colorMoved = plain       # Highlight moved blocks in diffs
+	mnemonicPrefix = true    # More intuitive refs in diff output
+[commit]
+	verbose = true           # Include diff comment in commit message template
+[column]
+	ui = auto                # Columnar output where it helps
+[branch]
+	sort = -committerdate    # Sort branches by most recent commit first
+[tag]
+	sort = -version:refname  # Sort version numbers as you would expect
+[rerere]
+	enabled = true           # Record and reuse conflict resolutions
+	autoupdate = true        # Apply stored conflict resolutions automatically
+
+[user]
+	name = YOUR NAME
+	email = you@example.com
+
+# GitHub credentials via the gh CLI, if you use it:
+# [credential "https://github.com"]
+# 	helper =
+# 	helper = !gh auth git-credential

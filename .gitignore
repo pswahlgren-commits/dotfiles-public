@@ -1,0 +1,77 @@
+# ─────────────────────────────────────────────────────────────────────────
+# Deny by default.
+#
+# This repo is a curated *export*, not a mirror of ~/.  Everything is ignored
+# unless a package below is explicitly allowed, so dropping a new file into
+# the working tree can never accidentally publish it -- you have to opt it in
+# on purpose.  Adding a package means adding a matching !rule here.
+# ─────────────────────────────────────────────────────────────────────────
+*
+
+# Traverse into directories so the allow-rules below can match inside them.
+!*/
+
+# Repo metadata
+!.gitignore
+!README.md
+
+# ── Allowed stow packages ────────────────────────────────────────────────
+!bash/**
+!bin/**
+!foot/**
+!git/**
+!hypr/**
+
+# ─────────────────────────────────────────────────────────────────────────
+# Re-denied last, so these win even inside an allowed package above.
+# ─────────────────────────────────────────────────────────────────────────
+
+# Machine-specific hardware config.  Only the .example template is tracked;
+# a real monitors.lua names outputs, modes and hostnames.
+hypr/.config/hypr/monitors.lua
+
+# Idle/DPMS policy is per-machine (a work desktop that must never blank is
+# not what you want on a laptop).
+hypr/.config/hypr/hypridle.conf
+
+# Desktop shell state: bar layout, per-host launchers, plugin settings.
+omarchy/
+**/shell.json
+**/shell.toml
+
+# Media/network services and anything naming a mount point.
+**/qBittorrent*
+**/*plex*
+**/*Plex*
+**/tailscale*
+**/*.fastresume
+**/BT_backup/
+
+# Credentials and keys, in every shape.
+**/.ssh/
+**/*.key
+**/*.pem
+**/*.p12
+**/*.pfx
+**/*id_rsa*
+**/*id_ed25519*
+**/hosts.yml
+**/credentials*
+**/*secret*
+**/*token*
+**/*password*
+**/.netrc
+**/.env
+**/.env.*
+
+# Local-only git identity, if you split it out as suggested in git/config.
+**/config.local
+
+# Backups, caches and editor droppings.
+*.bak
+*.bak.*
+*.orig
+*.rej
+*.swp
+*~
+.DS_Store

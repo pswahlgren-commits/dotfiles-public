@@ -1,0 +1,49 @@
+#!/bin/bash
+# Snap the active window to the left or right tile using Hyprland's actual
+# tiling (dwindle), not floating -- so other tiled windows on the workspace
+# adapt automatically (that's what tiling is) and any window opened
+# afterwards inserts into the tiling layout instead of opening hidden behind
+# a floating window (floating always renders above tiled in Hyprland,
+# regardless of focus -- that's what broke the earlier floating-based
+# version: two floating windows covering the screen hid anything opened
+# after them).
+#
+# Usage: hypr-tile-window left|right
+set -euo pipefail
+
+exec 9>"/tmp/hypr-tile-window.lock"
+flock -n 9 || exit 0
+
+direction=$1
+dir_letter="l"
+[[ $direction == "right" ]] && dir_letter="r"
+
+active_json=$(hyprctl activewindow -j)
+active_address=$(jq -r '.address' <<<"$active_json")
+active_floating=$(jq -r '.floating' <<<"$active_json")
+active_ws=$(jq -r '.workspace.id' <<<"$active_json")
+
+untile() {
+  local addr=$1
+  hyprctl dispatch "hl.dsp.window.float({action=\"unset\", window=\"address:$addr\"})" >/dev/null
+}
+
+[[ $active_floating == "true" ]] && untile "$active_address"
+
+# Also tile the most-recently-focused other window on this workspace, if
+# it's currently floating, so the active window has something to split
+# against instead of filling the whole workspace alone. Mainly matters
+# right after switching over from the old floating-based snap.
+other_address=$(
+  hyprctl clients -j | jq -r --arg addr "$active_address" --argjson ws "$active_ws" '
+    [.[] | select(.mapped and .address != $addr and .workspace.id == $ws)]
+    | sort_by(.focusHistoryID)
+    | .[0].address // empty
+  '
+)
+if [[ -n $other_address ]]; then
+  other_floating=$(hyprctl clients -j | jq -r --arg a "$other_address" '.[] | select(.address == $a) | .floating')
+  [[ $other_floating == "true" ]] && untile "$other_address"
+fi
+
+hyprctl dispatch "hl.dsp.window.swap({direction=\"$dir_letter\"})" >/dev/null

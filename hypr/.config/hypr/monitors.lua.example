@@ -1,0 +1,65 @@
+-- Monitor configuration.  See https://wiki.hypr.land/Configuring/Basics/Monitors/
+-- List your monitors and their supported modes with: hyprctl monitors all
+--
+-- Copy this file to monitors.lua and fill in your own hardware.  It is shipped
+-- as .example on purpose: monitor output names, resolutions and scale factors
+-- are per-machine, so a shared dotfiles repo should never carry real ones.
+--
+-- The hostname switch below is the useful part.  If you sync one dotfiles repo
+-- across several machines, a single global scale is wrong everywhere: a 4K
+-- panel at desk distance and a large TV across a room want very different
+-- values.  Give each machine its own block instead.
+
+local function hostname()
+  local pipe = io.popen("hostname")
+  if not pipe then
+    return ""
+  end
+
+  local name = pipe:read("*l") or ""
+  pipe:close()
+  return name
+end
+
+local host = hostname()
+
+if host == "REPLACE-WITH-HOSTNAME-A" then
+  -- Desk-distance HiDPI panel.
+  --
+  -- Set `mode` to what the display actually negotiates, not what the spec
+  -- sheet claims -- an unsupported refresh rate is silently ignored and you
+  -- fall back to something slower without any warning.  `hyprctl monitors`
+  -- shows the rate actually in use.
+  --
+  -- `cm = "auto"` is deliberate rather than "hdr"/"hdredid".  As of Hyprland
+  -- 0.56 those are still flagged experimental, and on the Nvidia proprietary
+  -- driver a monitor that auto-switches into HDR can render SDR content far
+  -- too dark.  Omitting `cm` entirely is what triggers that.  Revisit once
+  -- the HDR options are stamped stable.
+  --
+  -- `bitdepth = 10` removes banding on wide-gamut/OLED panels.
+  local gdk_scale = 1.25
+  hl.env("GDK_SCALE", tostring(gdk_scale))
+  hl.monitor({
+    output = "REPLACE-WITH-OUTPUT",   -- e.g. DP-1, HDMI-A-1
+    mode = "REPLACE-WITH-MODE",       -- e.g. 2560x1440@144
+    position = "0x0",
+    scale = 1.25,
+    vrr = 1,
+    bitdepth = 10,
+    cm = "auto",
+  })
+elseif host == "REPLACE-WITH-HOSTNAME-B" then
+  -- Large display viewed from a distance: no HiDPI scaling, since the pixels
+  -- are already large enough that fractional scaling just wastes resolution
+  -- rather than helping legibility.
+  hl.env("GDK_SCALE", "1")
+  hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
+else
+  -- Unknown machine: fall back to the compositor's own defaults rather than
+  -- guessing at hardware this file has never seen.
+  hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
+end
+
+-- Portrait/rotated secondary monitor (transform: 1 = 90 deg, 3 = 270 deg).
+-- hl.monitor({ output = "DP-2", mode = "preferred", position = "auto", scale = 1, transform = 1 })
